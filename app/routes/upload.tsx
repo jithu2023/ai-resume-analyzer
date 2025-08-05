@@ -1,68 +1,141 @@
-import {useState, type FormEvent} from 'react'
+import { useState, type FormEvent } from 'react';
 import Navbar from "../components/Navbar";
 import FileUploader from '~/components/FileUploader';
+import { usePuterStore } from '~/lib/puter';
+import { useNavigate } from 'react-router';
+import { convertPdfToImage } from '~/lib/pdf2img';
+import { generateUUID } from '~/lib/utils';
+import { prepareInstructions } from 'constants/index';
 
-
-const upload = () => {
-    const[isUploading, setIsUploading] = useState(false);
-    const[isProcessing, setIsProcessing] = useState(false);
+const Upload = () => {
+    const { auth, fs, isLoading, ai, kv } = usePuterStore();
+    const navigate = useNavigate();
+    const [isUploading, setIsUploading] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
     const [statusText, setStatusText] = useState("");
     const [file, setFile] = useState<File | null>(null);
 
     const handleFileSelect = (file: File | null) => {
-        setFile(file)
-    }
-    const handleSubmit =(e:FormEvent<HTMLFormElement>)=>{
+        setFile(file);
+    };
+
+    const handleAnalyze = async ({
+        companyName,
+        jobTitle,
+        jobDescription,
+        file
+    }: {
+        companyName: string;
+        jobTitle: string;
+        jobDescription: string;
+        file: File | null;
+    }) => {
+        if (!file) {
+            setStatusText("No file selected.");
+            return;
+        }
+
+        setIsProcessing(true);
+        setStatusText("uploading your resume...");
+        const uploadedFile = await fs.upload([file]);
+        if (!uploadedFile) return setStatusText("Failed to upload file");
+
+        setStatusText("converting to image...");
+        const imageFile = await convertPdfToImage(file);
+        if (!imageFile) return setStatusText("Failed to convert PDF to image");
+
+        setStatusText("uploading image...");
+        if (!imageFile.file) return setStatusText("Image file is null");
+        const uploadedImage = await fs.upload([imageFile.file]);
+        if (!uploadedImage) return setStatusText("Failed to upload image");
+
+        setStatusText("preparing data...");
+        const uuid = generateUUID();
+        const data = {
+            id: uuid,
+            resumePath: uploadedFile.path,
+            imagePath: uploadedImage.path,
+            companyName,
+            jobTitle,
+            jobDescription,
+            feedback: ''
+        };
+
+        await kv.set(`resume:${uuid}`, JSON.stringify(data));
+
+        setStatusText("analyzing resume...");
+        const feedback = await ai.feedback(
+            uploadedFile.path,
+            prepareInstructions({ jobTitle, jobDescription })
+        );
+
+        if (!feedback) return setStatusText("Failed to analyze resume");
+
+        const feedbackText = typeof feedback.message.content === 'string'
+            ? feedback.message.content
+            : feedback.message.content[0].text;
+
+        data.feedback = JSON.parse(feedbackText);
+        await kv.set(`resume:${uuid}`, JSON.stringify(data));
+        setStatusText("analysis complete. redirecting...");
+        console.log(data);
+    };
+
+    const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        const form =e.currentTarget.closest('form');
+        const form = e.currentTarget.closest('form');
         if (!form) return;
+
         const formData = new FormData(form);
-        const companyName = formData.get('company-name') ;
-        const jobTitle = formData.get('Job-Ttile') ;
-        const jobDescription = formData.get('Job-Description') ;
-        console.log({ companyName, jobTitle, jobDescription, file });
-    }
+        const companyName = formData.get('company-name') as string;
+        const jobTitle = formData.get('Job-Title') as string;
+        const jobDescription = formData.get('Job-Description') as string;
 
-  return (
-    <main className="bg-[url('/images/bg-main.svg')] bg-cover">
-    <Navbar />
-    <section className="main-section">
-        <div className='page-heading py-16'>
-            <h1>Smart Feedback For your Dream Job</h1>
-            { isProcessing ? (
-                <>
-                <h2>{statusText}</h2>
-                <img src='/images/resume-scan.gif' className='w-full'/>
+        if (!file) return;
+        handleAnalyze({ companyName, jobTitle, jobDescription, file });
+    };
 
-                </>
-            ):(
-                <h2>Drop your resume for ATS score and improvement tips</h2>
-            )}
-            {!isProcessing && (
-                <form id="upload form" onSubmit={handleSubmit} className='flex flex-col gap-4 mt-8'>
-                    <div className='form-div'>
-                        <label htmlFor="company-name">Company Name</label>
-                        <input type="text" name="company-name" placeholder='Company Name' id="company-name" />                  </div>
-                    <div className='form-div'>
-                        <label htmlFor="job-Title">Job Title</label>
-                        <input type="text" name="Job-Ttile" placeholder='Job Title' id="Job-Ttile" />                  </div>
-                    <div className='form-div'>
-                        <label htmlFor="job-Description">Job Description</label>
-                        <textarea rows={5} name="Job-Description" placeholder='Job Description' id="Job-Description" />                  </div>
-                    <div className='form-div'>
-                        <label htmlFor="uploader">Upload Resume</label>
-                        <FileUploader onFileSelect={handleFileSelect} />
-                        <button className='primary-button' type='submit'>
-                          Analyze Resume  
-                        </button>
-                                      </div>
+    return (
+        <main className="bg-[url('/images/bg-main.svg')] bg-cover">
+            <Navbar />
+            <section className="main-section">
+                <div className="page-heading py-16">
+                    <h1>Smart Feedback For your Dream Job</h1>
+                    {isProcessing ? (
+                        <>
+                            <h2>{statusText}</h2>
+                            <img src="/images/resume-scan.gif" className="w-full" />
+                        </>
+                    ) : (
+                        <h2>Drop your resume for ATS score and improvement tips</h2>
+                    )}
+                    {!isProcessing && (
+                        <form id="upload-form" onSubmit={handleSubmit} className="flex flex-col gap-4 mt-8">
+                            <div className="form-div">
+                                <label htmlFor="company-name">Company Name</label>
+                                <input type="text" name="company-name" placeholder="Company Name" id="company-name" />
+                            </div>
+                            <div className="form-div">
+                                <label htmlFor="Job-Title">Job Title</label>
+                                <input type="text" name="Job-Title" placeholder="Job Title" id="Job-Title" />
+                            </div>
+                            <div className="form-div">
+                                <label htmlFor="Job-Description">Job Description</label>
+                                <textarea rows={5} name="Job-Description" placeholder="Job Description" id="Job-Description" />
+                            </div>
+                            <div className="form-div">
+                                <label htmlFor="uploader">Upload Resume</label>
+                                <FileUploader onFileSelect={handleFileSelect} />
+                                <button className="primary-button" type="submit">
+                                    Analyze Resume
+                                </button>
+                            </div>
+                        </form>
+                    )}
+                </div>
+            </section>
+        </main>
+    );
+};
 
-                </form>
-            )}
-        </div>
-    </section>
-    </main>
-  )
-}
-
-export default upload
+export default Upload;
