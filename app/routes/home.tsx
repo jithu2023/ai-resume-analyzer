@@ -14,7 +14,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function Home() {
-  const { isLoading, auth, fs, kv } = usePuterStore();
+  const { isLoading, auth, kv } = usePuterStore();
   const navigate = useNavigate();
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [loadingResumes, setLoadingResumes] = useState(false);
@@ -28,10 +28,10 @@ export default function Home() {
   useEffect(() => {
     const loadResumes = async () => {
       setLoadingResumes(true);
-      const resumesList = (await kv.list("resume:", true)) as KVItem[];
-      const parsedResumes: Resume[] = resumesList?.map((resume) =>
+      const resumes = (await kv.list("resume:*", true)) as KVItem[];
+      const parsedResumes: Resume[] = resumes?.map((resume) =>(
         JSON.parse(resume.value) as Resume
-      );
+       ) );
       console.log("parsedResumes", parsedResumes);
       setResumes(parsedResumes || []);
       setLoadingResumes(false);
